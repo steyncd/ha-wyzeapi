@@ -15,6 +15,7 @@ LOCK_UPDATED = f"{DOMAIN}.lock_updated"
 CAMERA_UPDATED = f"{DOMAIN}.camera_updated"
 LIGHT_UPDATED = f"{DOMAIN}.light_updated"
 COVER_UPDATED = f"{DOMAIN}.cover_updated"
+IRRIGATION_UPDATED = f"{DOMAIN}.irrigation_updated"
 # EVENT NAMES
 WYZE_CAMERA_EVENT = "wyze_camera_event"
 

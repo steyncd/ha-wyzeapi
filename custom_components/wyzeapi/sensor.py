@@ -28,6 +28,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
+    async_dispatcher_send,
 )
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -36,7 +37,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.entity_registry import async_get
 from homeassistant.helpers.entity import DeviceInfo
 
-from .const import CONF_CLIENT, DOMAIN, LOCK_UPDATED, CAMERA_UPDATED
+from .const import CONF_CLIENT, DOMAIN, LOCK_UPDATED, CAMERA_UPDATED, IRRIGATION_UPDATED
 from .token_manager import token_exception_handler
 
 _LOGGER = logging.getLogger(__name__)
@@ -535,21 +536,38 @@ class WyzeIrrigationBaseSensor(SensorEntity):
         )
 
     @callback
-    def async_update_callback(self, irrigation: Irrigation) -> None:
-        """Update the irrigation's state."""
-        self._device = self._irrigation_service.update_device_props(irrigation)
+    def handle_irrigation_update(self, irrigation: Irrigation) -> None:
+        """Update the irrigation's state via dispatcher."""
+        self._device = irrigation
         self.async_schedule_update_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to updates."""
-        self._device.callback_function = self.async_update_callback
-        self._irrigation_service.register_updater(self._device, 30)
-        await self._irrigation_service.start_update_manager()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{IRRIGATION_UPDATED}-{self._device.mac}",
+                self.handle_irrigation_update,
+            )
+        )
+        # Only register the updater once per device (first sensor to be added)
+        # The updater will dispatch to all entities
+        if not hasattr(self._irrigation_service, f"_updater_registered_{self._device.mac}"):
+            setattr(self._irrigation_service, f"_updater_registered_{self._device.mac}", True)
+
+            def callback_wrapper(irrigation: Irrigation):
+                """Wrapper to dispatch updates to all entities."""
+                async_dispatcher_send(self.hass, f"{IRRIGATION_UPDATED}-{self._device.mac}", irrigation)
+
+            self._device.callback_function = callback_wrapper
+            self._irrigation_service.register_updater(self._device, 30)
+            await self._irrigation_service.start_update_manager()
         return await super().async_added_to_hass()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when removed."""
-        self._irrigation_service.unregister_updater(self._device)
+        # Don't unregister the updater as other entities may still need it
+        pass
 
 
 class WyzeIrrigationRSSI(WyzeIrrigationBaseSensor):
@@ -795,8 +813,8 @@ class WyzeIrrigationZoneBaseSensor(SensorEntity):
         )
 
     @callback
-    def async_update_callback(self, irrigation: Irrigation) -> None:
-        """Update the irrigation's state."""
+    def handle_irrigation_update(self, irrigation: Irrigation) -> None:
+        """Update the irrigation's state via dispatcher."""
         self._device = irrigation
         # Update the zone reference
         for zone in self._device.zones:
@@ -807,14 +825,31 @@ class WyzeIrrigationZoneBaseSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to updates."""
-        self._device.callback_function = self.async_update_callback
-        self._irrigation_service.register_updater(self._device, 30)
-        await self._irrigation_service.start_update_manager()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{IRRIGATION_UPDATED}-{self._device.mac}",
+                self.handle_irrigation_update,
+            )
+        )
+        # Only register the updater once per device (first sensor to be added)
+        # The updater will dispatch to all entities
+        if not hasattr(self._irrigation_service, f"_updater_registered_{self._device.mac}"):
+            setattr(self._irrigation_service, f"_updater_registered_{self._device.mac}", True)
+
+            def callback_wrapper(irrigation: Irrigation):
+                """Wrapper to dispatch updates to all entities."""
+                async_dispatcher_send(self.hass, f"{IRRIGATION_UPDATED}-{self._device.mac}", irrigation)
+
+            self._device.callback_function = callback_wrapper
+            self._irrigation_service.register_updater(self._device, 30)
+            await self._irrigation_service.start_update_manager()
         return await super().async_added_to_hass()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when removed."""
-        self._irrigation_service.unregister_updater(self._device)
+        # Don't unregister the updater as other entities may still need it
+        pass
 
 
 class WyzeIrrigationZoneSoilMoisture(WyzeIrrigationZoneBaseSensor):
