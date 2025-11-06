@@ -12,10 +12,13 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ATTRIBUTION
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers import device_registry as dr
 from wyzeapy import Wyzeapy, CameraService, SensorService
 from wyzeapy.services.camera_service import Camera
 from wyzeapy.services.sensor_service import Sensor
+from wyzeapy.services.irrigation_service import IrrigationService, Irrigation, Zone
 from wyzeapy.types import DeviceTypes
 from .token_manager import token_exception_handler
 
@@ -45,6 +48,7 @@ async def async_setup_entry(
 
     sensor_service = await client.sensor_service
     camera_service = await client.camera_service
+    irrigation_service = await client.irrigation_service
 
     cameras = [
         WyzeCameraMotion(camera_service, camera)
@@ -55,8 +59,29 @@ async def async_setup_entry(
         for sensor in await sensor_service.get_sensors()
     ]
 
+    # Add irrigation binary sensors
+    irrigation_devices = await irrigation_service.get_irrigations()
+    irrigation_entities = []
+    for device in irrigation_devices:
+        # Update the device to get its zones
+        device = await irrigation_service.update(device)
+
+        # Add per-zone running status binary sensors
+        for zone in device.zones:
+            if zone.enabled:
+                irrigation_entities.append(WyzeIrrigationZoneRunning(irrigation_service, device, zone))
+
+        # Add device-level weather skip binary sensors
+        irrigation_entities.extend([
+            WyzeIrrigationRainDelay(irrigation_service, device),
+            WyzeIrrigationWindDelay(irrigation_service, device),
+            WyzeIrrigationFreezeDelay(irrigation_service, device),
+            WyzeIrrigationSaturationDelay(irrigation_service, device),
+        ])
+
     async_add_entities(cameras, True)
     async_add_entities(sensors, True)
+    async_add_entities(irrigation_entities, True)
 
 
 class WyzeSensor(BinarySensorEntity):
@@ -222,3 +247,238 @@ class WyzeCameraMotion(BinarySensorEntity):
             self._last_event = camera.last_event_ts
 
         self.schedule_update_ha_state()
+
+
+class WyzeIrrigationBaseBinarySensor(BinarySensorEntity):
+    """Base class for Wyze Irrigation binary sensors."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, irrigation_service: IrrigationService, irrigation: Irrigation) -> None:
+        """Initialize the irrigation base binary sensor."""
+        self._irrigation_service = irrigation_service
+        self._device = irrigation
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device.mac)},
+            name=self._device.nickname,
+            manufacturer="WyzeLabs",
+            model=self._device.product_model,
+            serial_number=self._device.sn,
+            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
+        )
+
+    @callback
+    def async_update_callback(self, irrigation: Irrigation) -> None:
+        """Update the irrigation's state."""
+        self._device = irrigation
+        self.async_schedule_update_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates."""
+        self._device.callback_function = self.async_update_callback
+        self._irrigation_service.register_updater(self._device, 30)
+        await self._irrigation_service.start_update_manager()
+        return await super().async_added_to_hass()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when removed."""
+        self._irrigation_service.unregister_updater(self._device)
+
+
+class WyzeIrrigationZoneRunning(BinarySensorEntity):
+    """Representation of a Wyze Irrigation Zone Running Status."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, irrigation_service: IrrigationService, irrigation: Irrigation, zone: Zone) -> None:
+        """Initialize the irrigation zone running binary sensor."""
+        self._irrigation_service = irrigation_service
+        self._device = irrigation
+        self._zone = zone
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Running"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-running"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device.mac)},
+            name=self._device.nickname,
+            manufacturer="WyzeLabs",
+            model=self._device.product_model,
+            serial_number=self._device.sn,
+            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the zone is currently running."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule_runs API endpoint
+        # For now, we'll check if the zone has a running status attribute
+        return getattr(self._zone, 'is_running', False)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the zone running status."""
+        return "mdi:sprinkler-variant" if self.is_on else "mdi:sprinkler-variant"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {
+            "zone_number": self._zone.zone_number,
+            "zone_id": self._zone.zone_id,
+        }
+        # Add remaining time if available
+        if hasattr(self._zone, 'remaining_time'):
+            attrs["remaining_time_seconds"] = self._zone.remaining_time
+        return attrs
+
+    @callback
+    def async_update_callback(self, irrigation: Irrigation) -> None:
+        """Update the irrigation's state."""
+        self._device = irrigation
+        # Update the zone reference
+        for zone in self._device.zones:
+            if zone.zone_number == self._zone.zone_number:
+                self._zone = zone
+                break
+        self.async_schedule_update_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates."""
+        self._device.callback_function = self.async_update_callback
+        self._irrigation_service.register_updater(self._device, 30)
+        await self._irrigation_service.start_update_manager()
+        return await super().async_added_to_hass()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when removed."""
+        self._irrigation_service.unregister_updater(self._device)
+
+
+class WyzeIrrigationRainDelay(WyzeIrrigationBaseBinarySensor):
+    """Representation of a Wyze Irrigation Rain Delay Status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Rain Delay Active"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-rain-delay"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if rain delay is active."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule API endpoint
+        return getattr(self._device, 'rain_delay_active', False)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the rain delay status."""
+        return "mdi:weather-rainy" if self.is_on else "mdi:weather-sunny"
+
+
+class WyzeIrrigationWindDelay(WyzeIrrigationBaseBinarySensor):
+    """Representation of a Wyze Irrigation Wind Delay Status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Wind Delay Active"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-wind-delay"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if wind delay is active."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule API endpoint
+        return getattr(self._device, 'wind_delay_active', False)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the wind delay status."""
+        return "mdi:weather-windy" if self.is_on else "mdi:weather-sunny"
+
+
+class WyzeIrrigationFreezeDelay(WyzeIrrigationBaseBinarySensor):
+    """Representation of a Wyze Irrigation Freeze Delay Status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Freeze Delay Active"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-freeze-delay"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if freeze delay is active."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule API endpoint
+        return getattr(self._device, 'freeze_delay_active', False)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the freeze delay status."""
+        return "mdi:snowflake" if self.is_on else "mdi:weather-sunny"
+
+
+class WyzeIrrigationSaturationDelay(WyzeIrrigationBaseBinarySensor):
+    """Representation of a Wyze Irrigation Saturation Delay Status."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Saturation Delay Active"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-saturation-delay"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if saturation delay is active."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule API endpoint
+        return getattr(self._device, 'saturation_delay_active', False)
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the saturation delay status."""
+        return "mdi:water-alert" if self.is_on else "mdi:water-check"

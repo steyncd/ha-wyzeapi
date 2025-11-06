@@ -9,7 +9,7 @@ from wyzeapy import Wyzeapy
 from wyzeapy.services.camera_service import Camera
 from wyzeapy.services.lock_service import Lock
 from wyzeapy.services.switch_service import Switch, SwitchUsageService
-from wyzeapy.services.irrigation_service import IrrigationService, Irrigation
+from wyzeapy.services.irrigation_service import IrrigationService, Irrigation, Zone
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -89,16 +89,36 @@ async def async_setup_entry(
 
     # Get all irrigation devices
     irrigation_devices = await irrigation_service.get_irrigations()
-    
+
     # Create sensor entities for each irrigation device
     for device in irrigation_devices:
         # Update the device to get its properties
         device = await irrigation_service.update(device)
+
+        # Add diagnostic sensors (existing)
         sensors.extend([
             WyzeIrrigationRSSI(irrigation_service, device),
             WyzeIrrigationIP(irrigation_service, device),
             WyzeIrrigationSSID(irrigation_service, device),
         ])
+
+        # Add new feature sensors
+        sensors.extend([
+            WyzeIrrigationCurrentZone(irrigation_service, device),
+            WyzeIrrigationNextScheduledRun(irrigation_service, device),
+            WyzeIrrigationActiveSchedules(irrigation_service, device),
+            WyzeIrrigationLastRunDuration(irrigation_service, device),
+        ])
+
+        # Add per-zone sensors
+        for zone in device.zones:
+            if zone.enabled:
+                sensors.extend([
+                    WyzeIrrigationZoneSoilMoisture(irrigation_service, device, zone),
+                    WyzeIrrigationZoneSmartDuration(irrigation_service, device, zone),
+                    WyzeIrrigationZoneRemainingTime(irrigation_service, device, zone),
+                    WyzeIrrigationZoneLastWatered(irrigation_service, device, zone),
+                ])
 
     async_add_entities(sensors, True)
 
@@ -601,3 +621,399 @@ class WyzeIrrigationSSID(WyzeIrrigationBaseSensor):
     def native_value(self) -> str:
         """Return the SSID."""
         return self._device.ssid
+
+
+class WyzeIrrigationCurrentZone(WyzeIrrigationBaseSensor):
+    """Representation of the currently running zone."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Current Zone"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-current-zone"
+
+    @property
+    def native_value(self) -> str:
+        """Return the currently running zone name or Idle."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule_runs API endpoint
+        if hasattr(self._device, 'current_running_zone'):
+            return self._device.current_running_zone
+        return "Idle"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the current zone sensor."""
+        return "mdi:sprinkler" if self.native_value != "Idle" else "mdi:sprinkler-off"
+
+
+class WyzeIrrigationNextScheduledRun(WyzeIrrigationBaseSensor):
+    """Representation of the next scheduled run time."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Next Scheduled Run"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-next-run"
+
+    @property
+    def native_value(self) -> datetime:
+        """Return the next scheduled run time."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule_runs API endpoint
+        if hasattr(self._device, 'next_scheduled_run'):
+            return self._device.next_scheduled_run
+        return None
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the next run sensor."""
+        return "mdi:calendar-clock"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {}
+        if hasattr(self._device, 'next_schedule_name'):
+            attrs["schedule_name"] = self._device.next_schedule_name
+        if hasattr(self._device, 'next_schedule_zones'):
+            attrs["zones"] = self._device.next_schedule_zones
+        return attrs
+
+
+class WyzeIrrigationActiveSchedules(WyzeIrrigationBaseSensor):
+    """Representation of the number of active schedules."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Active Schedules"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-active-schedules"
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of active schedules."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule API endpoint
+        if hasattr(self._device, 'active_schedules_count'):
+            return self._device.active_schedules_count
+        return 0
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the active schedules sensor."""
+        return "mdi:calendar-multiple"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {}
+        if hasattr(self._device, 'schedule_list'):
+            attrs["schedules"] = self._device.schedule_list
+        return attrs
+
+
+class WyzeIrrigationLastRunDuration(WyzeIrrigationBaseSensor):
+    """Representation of the last run duration."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Last Run Duration"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-last-run-duration"
+
+    @property
+    def native_value(self) -> int:
+        """Return the last run duration in minutes."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule_runs API endpoint
+        if hasattr(self._device, 'last_run_duration'):
+            return self._device.last_run_duration // 60  # Convert seconds to minutes
+        return 0
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Return the unit of measurement."""
+        return "min"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the last run duration sensor."""
+        return "mdi:timer-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {}
+        if hasattr(self._device, 'last_run_zones'):
+            attrs["zones_run"] = self._device.last_run_zones
+        if hasattr(self._device, 'last_run_end_time'):
+            attrs["end_time"] = self._device.last_run_end_time
+        return attrs
+
+
+class WyzeIrrigationZoneBaseSensor(SensorEntity):
+    """Base class for Wyze Irrigation zone-specific sensors."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, irrigation_service: IrrigationService, irrigation: Irrigation, zone: Zone) -> None:
+        """Initialize the irrigation zone base sensor."""
+        self._irrigation_service = irrigation_service
+        self._device = irrigation
+        self._zone = zone
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device.mac)},
+            name=self._device.nickname,
+            manufacturer="WyzeLabs",
+            model=self._device.product_model,
+            serial_number=self._device.sn,
+            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
+        )
+
+    @callback
+    def async_update_callback(self, irrigation: Irrigation) -> None:
+        """Update the irrigation's state."""
+        self._device = irrigation
+        # Update the zone reference
+        for zone in self._device.zones:
+            if zone.zone_number == self._zone.zone_number:
+                self._zone = zone
+                break
+        self.async_schedule_update_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates."""
+        self._device.callback_function = self.async_update_callback
+        self._irrigation_service.register_updater(self._device, 30)
+        await self._irrigation_service.start_update_manager()
+        return await super().async_added_to_hass()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when removed."""
+        self._irrigation_service.unregister_updater(self._device)
+
+
+class WyzeIrrigationZoneSoilMoisture(WyzeIrrigationZoneBaseSensor):
+    """Representation of a zone's soil moisture level."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Soil Moisture"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-soil-moisture"
+
+    @property
+    def native_value(self) -> float:
+        """Return the soil moisture percentage."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the zone details API endpoint
+        if hasattr(self._zone, 'soil_moisture_level_at_end_of_day_pct'):
+            return round(self._zone.soil_moisture_level_at_end_of_day_pct * 100, 1)
+        return None
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Return the unit of measurement."""
+        return PERCENTAGE
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the soil moisture sensor."""
+        if self.native_value is None:
+            return "mdi:water-percent"
+        elif self.native_value < 20:
+            return "mdi:water-alert"
+        elif self.native_value < 50:
+            return "mdi:water-minus"
+        else:
+            return "mdi:water-check"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {
+            "zone_number": self._zone.zone_number,
+            "zone_id": self._zone.zone_id,
+        }
+        # Add zone configuration details
+        if hasattr(self._zone, 'crop_type'):
+            attrs["crop_type"] = self._zone.crop_type
+        if hasattr(self._zone, 'soil_type'):
+            attrs["soil_type"] = self._zone.soil_type
+        if hasattr(self._zone, 'slope_type'):
+            attrs["slope_type"] = self._zone.slope_type
+        if hasattr(self._zone, 'exposure_type'):
+            attrs["exposure_type"] = self._zone.exposure_type
+        if hasattr(self._zone, 'nozzle_type'):
+            attrs["nozzle_type"] = self._zone.nozzle_type
+        if hasattr(self._zone, 'area'):
+            attrs["area_sq_ft"] = self._zone.area
+        if hasattr(self._zone, 'flow_rate'):
+            attrs["flow_rate_gpm"] = self._zone.flow_rate
+        if hasattr(self._zone, 'root_depth'):
+            attrs["root_depth_inches"] = self._zone.root_depth
+        return attrs
+
+
+class WyzeIrrigationZoneSmartDuration(WyzeIrrigationZoneBaseSensor):
+    """Representation of a zone's AI-calculated smart duration."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Smart Duration"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-smart-duration"
+
+    @property
+    def native_value(self) -> int:
+        """Return the smart duration in minutes."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the zone details API endpoint
+        if hasattr(self._zone, 'smart_duration'):
+            return self._zone.smart_duration // 60  # Convert seconds to minutes
+        return None
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Return the unit of measurement."""
+        return "min"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the smart duration sensor."""
+        return "mdi:brain"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {
+            "zone_number": self._zone.zone_number,
+            "zone_id": self._zone.zone_id,
+        }
+        if hasattr(self._zone, 'smart_duration'):
+            attrs["duration_seconds"] = self._zone.smart_duration
+        return attrs
+
+
+class WyzeIrrigationZoneRemainingTime(WyzeIrrigationZoneBaseSensor):
+    """Representation of a zone's remaining watering time."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Remaining Time"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-remaining-time"
+
+    @property
+    def native_value(self) -> int:
+        """Return the remaining time in minutes."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the schedule_runs API endpoint
+        if hasattr(self._zone, 'remaining_time'):
+            return self._zone.remaining_time // 60  # Convert seconds to minutes
+        return 0
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Return the unit of measurement."""
+        return "min"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the remaining time sensor."""
+        return "mdi:timer-sand" if self.native_value > 0 else "mdi:timer-off"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {
+            "zone_number": self._zone.zone_number,
+            "zone_id": self._zone.zone_id,
+        }
+        if hasattr(self._zone, 'remaining_time'):
+            attrs["remaining_seconds"] = self._zone.remaining_time
+        if hasattr(self._zone, 'is_running'):
+            attrs["is_running"] = self._zone.is_running
+        return attrs
+
+
+class WyzeIrrigationZoneLastWatered(WyzeIrrigationZoneBaseSensor):
+    """Representation of when a zone was last watered."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Last Watered"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-last-watered"
+
+    @property
+    def native_value(self) -> datetime:
+        """Return the timestamp of the last watering."""
+        # This will need to be implemented once the wyzeapy library
+        # provides access to the zone details API endpoint with latest_events
+        if hasattr(self._zone, 'last_watered_time'):
+            return self._zone.last_watered_time
+        return None
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the last watered sensor."""
+        return "mdi:clock-check-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return entity specific state attributes."""
+        attrs = {
+            "zone_number": self._zone.zone_number,
+            "zone_id": self._zone.zone_id,
+        }
+        # Add watering history if available
+        if hasattr(self._zone, 'latest_events'):
+            attrs["recent_waterings"] = self._zone.latest_events
+        if hasattr(self._zone, 'last_watered_duration'):
+            attrs["last_duration_seconds"] = self._zone.last_watered_duration
+        if hasattr(self._zone, 'last_schedule_name'):
+            attrs["last_schedule"] = self._zone.last_schedule_name
+        return attrs
