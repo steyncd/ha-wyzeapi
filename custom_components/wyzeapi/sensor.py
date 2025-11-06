@@ -555,6 +555,7 @@ class WyzeIrrigationBaseSensor(SensorEntity):
         if not hasattr(self._irrigation_service, f"_updater_registered_{self._device.mac}"):
             setattr(self._irrigation_service, f"_updater_registered_{self._device.mac}", True)
 
+            @callback
             def callback_wrapper(irrigation: Irrigation):
                 """Wrapper to dispatch updates to all entities."""
                 async_dispatcher_send(self.hass, f"{IRRIGATION_UPDATED}-{self._device.mac}", irrigation)
@@ -837,6 +838,7 @@ class WyzeIrrigationZoneBaseSensor(SensorEntity):
         if not hasattr(self._irrigation_service, f"_updater_registered_{self._device.mac}"):
             setattr(self._irrigation_service, f"_updater_registered_{self._device.mac}", True)
 
+            @callback
             def callback_wrapper(irrigation: Irrigation):
                 """Wrapper to dispatch updates to all entities."""
                 async_dispatcher_send(self.hass, f"{IRRIGATION_UPDATED}-{self._device.mac}", irrigation)
