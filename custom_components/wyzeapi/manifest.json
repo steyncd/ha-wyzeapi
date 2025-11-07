@@ -10,7 +10,7 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/SecKatie/ha-wyzeapi/issues",
   "requirements": [
-    "git+https://github.com/steyncd/wyzeapy.git@main"
+    "wyzeapy @ git+https://github.com/steyncd/wyzeapy.git@main"
   ],
   "version": "0.1.35"
 }
