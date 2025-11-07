@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_sprinkler_api.py:*)",
+      "Bash(python test_api_direct.py:*)",
+      "Bash(pip install:*)",
+      "Bash(python test_running_status.py:*)",
+      "Bash(pip show:*)",
+      "Bash(python start_zone_test.py:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
