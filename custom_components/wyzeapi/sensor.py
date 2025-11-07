@@ -980,8 +980,6 @@ class WyzeIrrigationZoneRemainingTime(WyzeIrrigationZoneBaseSensor):
     @property
     def native_value(self) -> int:
         """Return the remaining time in minutes."""
-        # This will need to be implemented once the wyzeapy library
-        # provides access to the schedule_runs API endpoint
         if hasattr(self._zone, 'remaining_time'):
             return self._zone.remaining_time // 60  # Convert seconds to minutes
         return 0

@@ -349,9 +349,6 @@ class WyzeIrrigationZoneRunning(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return true if the zone is currently running."""
-        # This will need to be implemented once the wyzeapy library
-        # provides access to the schedule_runs API endpoint
-        # For now, we'll check if the zone has a running status attribute
         return getattr(self._zone, 'is_running', False)
 
     @property

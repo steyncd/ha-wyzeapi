@@ -8,7 +8,10 @@
       "Bash(pip show:*)",
       "Bash(python start_zone_test.py:*)",
       "Bash(python:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd irrigation running status support via forked wyzeapy\n\n- Update manifest.json to use forked wyzeapy with running status support\n- Fork: https://github.com/steyncd/wyzeapy (feature/irrigation-running-status)\n- Remove temporary test files and documentation\n- Clean up development artifacts\n\nThe forked wyzeapy includes:\n- is_running and remaining_time properties on Zone objects\n- Real-time detection via schedule_runs API endpoint\n- Automatic updates during regular polling cycle\n\nThis allows Home Assistant to display:\n- Binary sensors for zone running status\n- Countdown sensors for remaining watering time\n- Current zone and next scheduled run information\n\nOnce PR is merged to upstream wyzeapy, manifest will be updated\nto use official release version.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nRemove outdated comments from irrigation sensors\n\n- Remove comments stating wyzeapy needs implementation\n- is_running and remaining_time are now provided by forked wyzeapy\n- These properties are available via schedule_runs API endpoint\n\nThe forked wyzeapy now includes these features, so the comments\nare no longer accurate and have been removed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
