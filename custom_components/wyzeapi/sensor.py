@@ -688,10 +688,10 @@ class WyzeIrrigationNextScheduledRun(WyzeIrrigationBaseSensor):
     @property
     def native_value(self) -> datetime:
         """Return the next scheduled run time."""
-        # This will need to be implemented once the wyzeapy library
-        # provides access to the schedule_runs API endpoint
-        if hasattr(self._device, 'next_scheduled_run'):
-            return self._device.next_scheduled_run
+        if hasattr(self._device, 'next_scheduled_run') and self._device.next_scheduled_run:
+            # Parse ISO format UTC timestamp
+            from datetime import datetime
+            return datetime.fromisoformat(self._device.next_scheduled_run.replace('Z', '+00:00'))
         return None
 
     @property
@@ -1026,10 +1026,10 @@ class WyzeIrrigationZoneLastWatered(WyzeIrrigationZoneBaseSensor):
     @property
     def native_value(self) -> datetime:
         """Return the timestamp of the last watering."""
-        # This will need to be implemented once the wyzeapy library
-        # provides access to the zone details API endpoint with latest_events
-        if hasattr(self._zone, 'last_watered_time'):
-            return self._zone.last_watered_time
+        if hasattr(self._zone, 'last_watered') and self._zone.last_watered:
+            # Parse ISO format UTC timestamp
+            from datetime import datetime
+            return datetime.fromisoformat(self._zone.last_watered.replace('Z', '+00:00'))
         return None
 
     @property
