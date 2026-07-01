@@ -8,7 +8,7 @@ from typing import Any
 
 from wyzeapy import Wyzeapy
 from wyzeapy.services.camera_service import Camera
-from wyzeapy.services.irrigation_service import Irrigation, IrrigationService
+from wyzeapy.services.irrigation_service import Irrigation, IrrigationService, Zone
 from wyzeapy.services.lock_service import Lock
 from wyzeapy.services.switch_service import Switch, SwitchUsageService
 
@@ -42,6 +42,7 @@ from .const import (
     LOCK_UPDATED,
     RESET_BUTTON_PRESSED,
 )
+from .irrigation import WyzeIrrigationEntity, WyzeIrrigationZoneEntity
 from .token_manager import token_exception_handler
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,13 +103,28 @@ async def async_setup_entry(
     for device in irrigation_devices:
         # Update the device to get its properties
         device = await irrigation_service.update(device)
+        # Diagnostic + status sensors (device level)
         sensors.extend(
             [
                 WyzeIrrigationRSSI(irrigation_service, device),
                 WyzeIrrigationIP(irrigation_service, device),
                 WyzeIrrigationSSID(irrigation_service, device),
+                WyzeIrrigationCurrentZone(irrigation_service, device),
+                WyzeIrrigationNextScheduledRun(irrigation_service, device),
+                WyzeIrrigationActiveSchedules(irrigation_service, device),
+                WyzeIrrigationLastRunDuration(irrigation_service, device),
             ]
         )
+        # Per-zone status sensors
+        for zone in device.zones:
+            if zone.enabled:
+                sensors.extend(
+                    [
+                        WyzeIrrigationZoneSmartDuration(irrigation_service, device, zone),
+                        WyzeIrrigationZoneRemainingTime(irrigation_service, device, zone),
+                        WyzeIrrigationZoneLastWatered(irrigation_service, device, zone),
+                    ]
+                )
 
     async_add_entities(sensors, True)
 
@@ -512,47 +528,16 @@ class WyzePlugDailyEnergySensor(RestoreSensor):
         )
 
 
-class WyzeIrrigationBaseSensor(SensorEntity):
-    """Base class for Wyze Irrigation sensors."""
+class WyzeIrrigationBaseSensor(WyzeIrrigationEntity, SensorEntity):
+    """Base class for device-level Wyze Irrigation sensors.
 
-    _attr_has_entity_name = True
-    _attr_should_poll = False
+    Device info, dispatcher subscription and single-updater wiring come from
+    :class:`WyzeIrrigationEntity`.
+    """
 
-    def __init__(
-        self, irrigation_service: IrrigationService, irrigation: Irrigation
-    ) -> None:
-        """Initialize the irrigation base sensor."""
-        self._irrigation_service = irrigation_service
-        self._device = irrigation
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this entity."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device.mac)},
-            name=self._device.nickname,
-            manufacturer="WyzeLabs",
-            model=self._device.product_model,
-            serial_number=self._device.sn,
-            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
-        )
-
-    @callback
-    def async_update_callback(self, irrigation: Irrigation) -> None:
-        """Update the irrigation's state."""
-        self._device = self._irrigation_service.update_device_props(irrigation)
-        self.async_schedule_update_ha_state()
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to updates."""
-        self._device.callback_function = self.async_update_callback
-        self._irrigation_service.register_updater(self._device, 30)
-        await self._irrigation_service.start_update_manager()
-        return await super().async_added_to_hass()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up when removed."""
-        self._irrigation_service.unregister_updater(self._device)
+class WyzeIrrigationZoneSensor(WyzeIrrigationZoneEntity, SensorEntity):
+    """Base class for per-zone Wyze Irrigation sensors."""
 
 
 class WyzeIrrigationRSSI(WyzeIrrigationBaseSensor):
@@ -624,3 +609,187 @@ class WyzeIrrigationSSID(WyzeIrrigationBaseSensor):
     def native_value(self) -> str:
         """Return the SSID."""
         return self._device.ssid
+
+
+def _parse_utc(timestamp: str | None) -> datetime.datetime | None:
+    """Parse an ISO-8601 UTC timestamp (``...Z``) into an aware datetime."""
+    if not timestamp:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+class WyzeIrrigationCurrentZone(WyzeIrrigationBaseSensor):
+    """Name of the zone currently watering (or 'Idle')."""
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Current Zone"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-current-zone"
+
+    @property
+    def native_value(self) -> str:
+        """Return the currently running zone name, or 'Idle'."""
+        return getattr(self._device, "current_running_zone", None) or "Idle"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the current zone sensor."""
+        return "mdi:sprinkler" if self.native_value != "Idle" else "mdi:sprinkler-off"
+
+
+class WyzeIrrigationNextScheduledRun(WyzeIrrigationBaseSensor):
+    """Timestamp of the next scheduled run."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:calendar-clock"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Next Scheduled Run"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-next-run"
+
+    @property
+    def native_value(self) -> datetime.datetime | None:
+        """Return the next scheduled run time."""
+        return _parse_utc(getattr(self._device, "next_scheduled_run", None))
+
+
+class WyzeIrrigationActiveSchedules(WyzeIrrigationBaseSensor):
+    """Number of enabled configured schedules."""
+
+    _attr_icon = "mdi:calendar-multiple"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Active Schedules"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-active-schedules"
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of enabled schedules."""
+        return int(getattr(self._device, "active_schedules_count", 0) or 0)
+
+
+class WyzeIrrigationLastRunDuration(WyzeIrrigationBaseSensor):
+    """Duration of the most recent completed run (minutes)."""
+
+    _attr_icon = "mdi:timer-outline"
+    _attr_native_unit_of_measurement = "min"
+    _attr_device_class = SensorDeviceClass.DURATION
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return "Last Run Duration"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-last-run-duration"
+
+    @property
+    def native_value(self) -> int:
+        """Return the last completed run duration in minutes."""
+        return int(getattr(self._device, "last_run_duration", 0) or 0) // 60
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return extra attributes."""
+        return {
+            "last_run_end_time": getattr(self._device, "last_run_end_time", None),
+            "duration_seconds": getattr(self._device, "last_run_duration", 0),
+        }
+
+
+class WyzeIrrigationZoneSmartDuration(WyzeIrrigationZoneSensor):
+    """Configured smart-watering duration for a zone (minutes)."""
+
+    _attr_icon = "mdi:timer-cog-outline"
+    _attr_native_unit_of_measurement = "min"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Smart Duration"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-smart-duration"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the smart duration in minutes."""
+        value = getattr(self._zone, "smart_duration", None)
+        return value // 60 if value is not None else None
+
+
+class WyzeIrrigationZoneRemainingTime(WyzeIrrigationZoneSensor):
+    """Remaining watering time for a currently running zone (minutes)."""
+
+    _attr_icon = "mdi:timer-sand"
+    _attr_native_unit_of_measurement = "min"
+    _attr_device_class = SensorDeviceClass.DURATION
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Remaining Time"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-remaining-time"
+
+    @property
+    def native_value(self) -> int:
+        """Return the remaining time in minutes (0 when idle)."""
+        return int(getattr(self._zone, "remaining_time", 0) or 0) // 60
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return extra attributes."""
+        return {"remaining_seconds": getattr(self._zone, "remaining_time", 0)}
+
+
+class WyzeIrrigationZoneLastWatered(WyzeIrrigationZoneSensor):
+    """Timestamp a zone last finished watering."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:water-check"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Last Watered"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-last-watered"
+
+    @property
+    def native_value(self) -> datetime.datetime | None:
+        """Return the last-watered timestamp."""
+        return _parse_utc(getattr(self._zone, "last_watered", None))

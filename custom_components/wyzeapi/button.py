@@ -61,8 +61,10 @@ async def async_setup_entry(
                 if zone.enabled
             ]
         )
-        # Add a stop all schedules button for each irrigation device, not each zone
+        # Add device-level control buttons (one per device, not per zone)
         buttons.append(WyzeIrrigationStopAllButton(irrigation_service, device))
+        buttons.append(WyzeIrrigationPauseButton(irrigation_service, device))
+        buttons.append(WyzeIrrigationResumeButton(irrigation_service, device))
 
     plugs = await switch_service.get_switches()
     buttons.extend(
@@ -281,6 +283,96 @@ class WyzeIrrigationStopAllButton(ButtonEntity):
         except Exception as err:
             _LOGGER.error("Error stopping schedules: %s", err)
             raise HomeAssistantError(f"Failed to stop schedules: {err}") from err
+
+
+class WyzeIrrigationPauseButton(ButtonEntity):
+    """Representation of a Wyze Irrigation Pause Button."""
+
+    _attr_name = "Pause Irrigation"
+
+    def __init__(
+        self, irrigation_service: IrrigationService, irrigation: Irrigation
+    ) -> None:
+        """Initialize the irrigation pause button."""
+        self._irrigation_service = irrigation_service
+        self._device = irrigation
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the button."""
+        return f"{self._device.mac}-pause"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device.mac)},
+            name=self._device.nickname,
+            manufacturer="WyzeLabs",
+            model=self._device.product_model,
+            serial_number=self._device.sn,
+            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
+        )
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the pause button."""
+        return "mdi:pause-circle"
+
+    async def async_press(self) -> None:
+        """Pause the currently running irrigation without cancelling it."""
+        try:
+            await self._irrigation_service.pause_irrigation(self._device)
+        except ClientConnectionError as err:
+            raise HomeAssistantError(f"Failed to pause irrigation: {err}") from err
+        except Exception as err:
+            _LOGGER.error("Error pausing irrigation: %s", err)
+            raise HomeAssistantError(f"Failed to pause irrigation: {err}") from err
+
+
+class WyzeIrrigationResumeButton(ButtonEntity):
+    """Representation of a Wyze Irrigation Resume Button."""
+
+    _attr_name = "Resume Irrigation"
+
+    def __init__(
+        self, irrigation_service: IrrigationService, irrigation: Irrigation
+    ) -> None:
+        """Initialize the irrigation resume button."""
+        self._irrigation_service = irrigation_service
+        self._device = irrigation
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the button."""
+        return f"{self._device.mac}-resume"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device.mac)},
+            name=self._device.nickname,
+            manufacturer="WyzeLabs",
+            model=self._device.product_model,
+            serial_number=self._device.sn,
+            connections={(dr.CONNECTION_NETWORK_MAC, self._device.mac)},
+        )
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the resume button."""
+        return "mdi:play-circle"
+
+    async def async_press(self) -> None:
+        """Resume a previously paused irrigation."""
+        try:
+            await self._irrigation_service.resume_irrigation(self._device)
+        except ClientConnectionError as err:
+            raise HomeAssistantError(f"Failed to resume irrigation: {err}") from err
+        except Exception as err:
+            _LOGGER.error("Error resuming irrigation: %s", err)
+            raise HomeAssistantError(f"Failed to resume irrigation: {err}") from err
 
 
 class WyzePowerSensorResetButton(ButtonEntity):

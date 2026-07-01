@@ -11,12 +11,14 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ATTRIBUTION
+from homeassistant.const import ATTR_ATTRIBUTION, EntityCategory
 from homeassistant.core import HomeAssistant
 from wyzeapy import Wyzeapy, CameraService, SensorService
 from wyzeapy.services.camera_service import Camera
+from wyzeapy.services.irrigation_service import Irrigation, IrrigationService
 from wyzeapy.services.sensor_service import Sensor
 from wyzeapy.types import DeviceTypes
+from .irrigation import WyzeIrrigationEntity, WyzeIrrigationZoneEntity
 from .token_manager import token_exception_handler
 
 from .const import DOMAIN, CONF_CLIENT
@@ -57,6 +59,37 @@ async def async_setup_entry(
 
     async_add_entities(cameras, True)
     async_add_entities(sensors, True)
+
+    # Irrigation (Wyze Sprinkler Controller) binary sensors
+    irrigation_service = await client.irrigation_service
+    irrigation_entities: List[Any] = []
+    for device in await irrigation_service.get_irrigations():
+        device = await irrigation_service.update(device)
+        # Device-level smart-skip (weather intelligence) status
+        irrigation_entities.extend(
+            [
+                WyzeIrrigationSkipBinarySensor(
+                    irrigation_service, device, "skip_rain", "Rain Skip", "mdi:weather-rainy"
+                ),
+                WyzeIrrigationSkipBinarySensor(
+                    irrigation_service, device, "skip_wind", "Wind Skip", "mdi:weather-windy"
+                ),
+                WyzeIrrigationSkipBinarySensor(
+                    irrigation_service, device, "skip_low_temp", "Freeze Skip", "mdi:snowflake"
+                ),
+                WyzeIrrigationSkipBinarySensor(
+                    irrigation_service, device, "skip_saturation", "Saturation Skip", "mdi:water-alert"
+                ),
+            ]
+        )
+        # Per-zone running status
+        for zone in device.zones:
+            if zone.enabled:
+                irrigation_entities.append(
+                    WyzeIrrigationZoneRunning(irrigation_service, device, zone)
+                )
+
+    async_add_entities(irrigation_entities, True)
 
 
 class WyzeSensor(BinarySensorEntity):
@@ -222,3 +255,73 @@ class WyzeCameraMotion(BinarySensorEntity):
             self._last_event = camera.last_event_ts
 
         self.schedule_update_ha_state()
+
+
+class WyzeIrrigationZoneRunning(WyzeIrrigationZoneEntity, BinarySensorEntity):
+    """Binary sensor: is this irrigation zone currently watering."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:sprinkler-variant"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the binary sensor."""
+        return f"{self._zone.name} Running"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the binary sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-running"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the zone is currently running."""
+        return bool(getattr(self._zone, "is_running", False))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return extra attributes."""
+        return {
+            "zone_number": self._zone.zone_number,
+            "zone_id": getattr(self._zone, "zone_id", None),
+            "remaining_time_seconds": getattr(self._zone, "remaining_time", 0),
+        }
+
+
+class WyzeIrrigationSkipBinarySensor(WyzeIrrigationEntity, BinarySensorEntity):
+    """Binary sensor reflecting a device smart-skip (weather intelligence) setting.
+
+    ``on`` means the device is configured to skip watering for the given
+    condition (rain / wind / freeze / saturation).
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        irrigation_service: IrrigationService,
+        irrigation: Irrigation,
+        attribute: str,
+        label: str,
+        icon: str,
+    ) -> None:
+        """Initialize the smart-skip binary sensor."""
+        super().__init__(irrigation_service, irrigation)
+        self._attribute = attribute
+        self._label = label
+        self._attr_icon = icon
+
+    @property
+    def name(self) -> str:
+        """Return the name of the binary sensor."""
+        return self._label
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the binary sensor."""
+        return f"{self._device.mac}-{self._attribute.replace('_', '-')}"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if this smart-skip condition is enabled."""
+        return bool(getattr(self._device, self._attribute, False))
