@@ -688,6 +688,16 @@ class WyzeIrrigationActiveSchedules(WyzeIrrigationBaseSensor):
         """Return the number of enabled schedules."""
         return int(getattr(self._device, "active_schedules_count", 0) or 0)
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return device diagnostics reported by device_info."""
+        attrs = {}
+        for key in ("schedules_enabled", "wiring", "rain_sensor"):
+            value = getattr(self._device, key, None)
+            if value is not None:
+                attrs[key] = value
+        return attrs
+
 
 class WyzeIrrigationLastRunDuration(WyzeIrrigationBaseSensor):
     """Duration of the most recent completed run (minutes)."""

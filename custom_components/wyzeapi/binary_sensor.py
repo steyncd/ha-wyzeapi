@@ -80,6 +80,7 @@ async def async_setup_entry(
                 WyzeIrrigationSkipBinarySensor(
                     irrigation_service, device, "skip_saturation", "Saturation Skip", "mdi:water-alert"
                 ),
+                WyzeIrrigationSchedulesEnabled(irrigation_service, device),
             ]
         )
         # Per-zone running status
@@ -280,12 +281,17 @@ class WyzeIrrigationZoneRunning(WyzeIrrigationZoneEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return extra attributes."""
-        return {
+        """Return extra attributes, including any zone characteristics the API provides."""
+        attrs = {
             "zone_number": self._zone.zone_number,
             "zone_id": getattr(self._zone, "zone_id", None),
             "remaining_time_seconds": getattr(self._zone, "remaining_time", 0),
         }
+        for key in ("crop_type", "soil_type", "nozzle_type", "exposure", "slope"):
+            value = getattr(self._zone, key, None)
+            if value is not None:
+                attrs[key] = value
+        return attrs
 
 
 class WyzeIrrigationSkipBinarySensor(WyzeIrrigationEntity, BinarySensorEntity):
@@ -325,3 +331,24 @@ class WyzeIrrigationSkipBinarySensor(WyzeIrrigationEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Return True if this smart-skip condition is enabled."""
         return bool(getattr(self._device, self._attribute, False))
+
+
+class WyzeIrrigationSchedulesEnabled(WyzeIrrigationEntity, BinarySensorEntity):
+    """Binary sensor: whether scheduled irrigation programs are enabled on the device."""
+
+    _attr_icon = "mdi:calendar-check"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the binary sensor."""
+        return "Schedules Enabled"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the binary sensor."""
+        return f"{self._device.mac}-schedules-enabled"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if scheduled programs are enabled."""
+        return bool(getattr(self._device, "schedules_enabled", False))
