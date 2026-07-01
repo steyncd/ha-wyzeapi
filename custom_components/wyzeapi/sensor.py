@@ -123,6 +123,7 @@ async def async_setup_entry(
                         WyzeIrrigationZoneSmartDuration(irrigation_service, device, zone),
                         WyzeIrrigationZoneRemainingTime(irrigation_service, device, zone),
                         WyzeIrrigationZoneLastWatered(irrigation_service, device, zone),
+                        WyzeIrrigationZoneSoilMoisture(irrigation_service, device, zone),
                     ]
                 )
 
@@ -803,3 +804,46 @@ class WyzeIrrigationZoneLastWatered(WyzeIrrigationZoneSensor):
     def native_value(self) -> datetime.datetime | None:
         """Return the last-watered timestamp."""
         return _parse_utc(getattr(self._zone, "last_watered", None))
+
+
+class WyzeIrrigationZoneSoilMoisture(WyzeIrrigationZoneSensor):
+    """Estimated end-of-day soil moisture for a zone (Wyze smart-schedule model)."""
+
+    _attr_icon = "mdi:water-percent"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self._zone.name} Soil Moisture"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID for the sensor."""
+        return f"{self._device.mac}-zone-{self._zone.zone_number}-soil-moisture"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return soil moisture as a percentage (source is a 0-1 fraction)."""
+        value = getattr(self._zone, "soil_moisture", None)
+        if value is None:
+            return None
+        try:
+            return round(float(value) * 100, 1)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose the zone's smart-watering characteristics where available."""
+        attrs = {}
+        for key in (
+            "crop_type", "soil_type", "nozzle_type", "exposure_type", "slope_type",
+            "flow_rate", "efficiency", "root_depth", "available_water_capacity",
+            "number_of_sprinkler_heads", "area", "wired",
+        ):
+            value = getattr(self._zone, key, None)
+            if value is not None:
+                attrs[key] = value
+        return attrs

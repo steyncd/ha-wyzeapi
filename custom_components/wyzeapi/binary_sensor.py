@@ -287,7 +287,7 @@ class WyzeIrrigationZoneRunning(WyzeIrrigationZoneEntity, BinarySensorEntity):
             "zone_id": getattr(self._zone, "zone_id", None),
             "remaining_time_seconds": getattr(self._zone, "remaining_time", 0),
         }
-        for key in ("crop_type", "soil_type", "nozzle_type", "exposure", "slope"):
+        for key in ("crop_type", "soil_type", "nozzle_type", "exposure_type", "slope_type"):
             value = getattr(self._zone, key, None)
             if value is not None:
                 attrs[key] = value
