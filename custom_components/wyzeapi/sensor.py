@@ -807,7 +807,13 @@ class WyzeIrrigationZoneLastWatered(WyzeIrrigationZoneSensor):
 
 
 class WyzeIrrigationZoneSoilMoisture(WyzeIrrigationZoneSensor):
-    """Estimated end-of-day soil moisture for a zone (Wyze smart-schedule model)."""
+    """Wyze's MODELED end-of-day soil-moisture estimate for a zone.
+
+    The BS_WK1 controller has no physical moisture sensor: this value is
+    computed by Wyze's smart-schedule algorithm from the zone's crop/soil/
+    nozzle/exposure configuration, weather, and watering history. Treat it
+    as an estimate/index, not a measurement.
+    """
 
     _attr_icon = "mdi:water-percent"
     _attr_native_unit_of_measurement = "%"
@@ -816,7 +822,7 @@ class WyzeIrrigationZoneSoilMoisture(WyzeIrrigationZoneSensor):
     @property
     def name(self) -> str:
         """Return the name of the sensor."""
-        return f"{self._zone.name} Soil Moisture"
+        return f"{self._zone.name} Est. Soil Moisture"
 
     @property
     def unique_id(self) -> str:
