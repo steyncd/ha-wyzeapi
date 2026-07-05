@@ -15,5 +15,5 @@
     "wyzeapy @ git+https://github.com/steyncd/wyzeapy.git@main",
     "websockets"
   ],
-  "version": "0.1.39"
+  "version": "0.1.40"
 }
